@@ -258,10 +258,23 @@ with st.sidebar:
         index=nombres.index("Stephen Curry")
     )
 
-    temporadas = ["2025-26","2024-25","2023-24","2022-23",
-                  "2021-22","2020-21","2019-20","2018-19"]
+    from datetime import datetime
+    hoy = datetime.now()
 
-    temporada_elegida = st.selectbox("Temporada", options=temporadas)
+    if hoy.month >= 9:
+        temporada_actual = hoy.year
+    else:
+        temporada_actual = hoy.year - 1
+
+    temporadas = [
+        f"{y}-{str(y + 1)[2:]}"
+        for y in range(temporada_actual, 1995, -1)
+    ]
+
+    temporada_elegida = st.selectbox(
+        "Temporada",
+        options=temporadas
+    )
     tipo_elegido      = st.selectbox("Tipo", options=["Regular Season", "Playoffs"])
     buscar            = st.button("Generar mapa de tiros", use_container_width=True)
 
