@@ -8,11 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Rectangle, Arc
 from matplotlib.animation import FuncAnimation, FFMpegWriter
 from nba_api.stats.static import players
-from nba_api.stats.endpoints import (
-    shotchartdetail,
-    leaguedashplayerstats,
-    playercareerstats
-)
+from nba_api.stats.endpoints import shotchartdetail, leaguedashplayerstats
 
 
 # ── Funciones ────────────────────────────────────────────────────────────────
@@ -45,7 +41,6 @@ def dibujar_cancha(ax=None, color_lineas="white", color_cancha="#1a1a2e", lw=1.5
     return ax
 
 
-@st.cache_data(show_spinner=False)
 def obtener_tiros(player_id, temporada="2025-26", tipo="Regular Season"):
     respuesta = shotchartdetail.ShotChartDetail(
         team_id=0,
@@ -75,7 +70,6 @@ def calcular_stats(df):
     }
 
 
-@st.cache_data(show_spinner=False)
 def obtener_ranking(player_id, temporada="2025-26", tipo="Regular Season"):
     respuesta = leaguedashplayerstats.LeagueDashPlayerStats(
         season=temporada,
@@ -256,11 +250,7 @@ with st.sidebar:
     st.markdown("---")
 
     todos_los_jugadores = players.get_players()
-
-    nombres = sorted([
-        j["full_name"]
-        for j in todos_los_jugadores
-    ])
+    nombres             = sorted([j["full_name"] for j in todos_los_jugadores])
 
     jugador_elegido = st.selectbox(
         "Buscá un jugador",
@@ -269,7 +259,6 @@ with st.sidebar:
     )
 
     from datetime import datetime
-
     hoy = datetime.now()
 
     if hoy.month >= 9:
@@ -286,16 +275,8 @@ with st.sidebar:
         "Temporada",
         options=temporadas
     )
-
-    tipo_elegido = st.selectbox(
-        "Tipo",
-        options=["Regular Season", "Playoffs"]
-    )
-
-    buscar = st.button(
-        "Generar mapa de tiros",
-        use_container_width=True
-    )
+    tipo_elegido      = st.selectbox("Tipo", options=["Regular Season", "Playoffs"])
+    buscar            = st.button("Generar mapa de tiros", use_container_width=True)
 
     if buscar:
         st.session_state.video_mostrado = False
@@ -307,101 +288,49 @@ st.title(f"{jugador_elegido}  —  {temporada_elegida}")
 col_grafico, col_stats = st.columns([3, 1])
 
 if buscar:
-
-    info_jugador = next(
-        j for j in todos_los_jugadores
-        if j["full_name"] == jugador_elegido
-    )
-
-    player_id = info_jugador["id"]
-
-    tiros = obtener_tiros(
-        player_id,
-        temporada_elegida,
-        tipo_elegido
-    )
-
-    if tiros.empty:
-        st.warning("No hay datos disponibles para esta temporada.")
-        st.stop()
+    info_jugador = next(j for j in todos_los_jugadores if j["full_name"] == jugador_elegido)
+    player_id    = info_jugador["id"]
 
     with st.spinner("Generando mapa de tiros..."):
+        tiros   = obtener_tiros(player_id, temporada_elegida, tipo_elegido)
+        stats   = calcular_stats(tiros)
+        ranking = obtener_ranking(player_id, temporada_elegida, tipo_elegido)
 
-        stats = calcular_stats(tiros)
+        ruta_mp4 = os.path.join(tempfile.gettempdir(), "shot_chart.mp4")
+        duracion_video = generar_video(tiros, jugador_elegido, ruta_mp4)
+        rutas_imagenes = generar_imagenes(tiros, jugador_elegido, temporada_elegida)
 
-        ranking = obtener_ranking(
-            player_id,
-            temporada_elegida,
-            tipo_elegido
-        )
-
-        ruta_mp4 = os.path.join(
-            tempfile.gettempdir(),
-            "shot_chart.mp4"
-        )
-
-        duracion_video = generar_video(
-            tiros,
-            jugador_elegido,
-            ruta_mp4
-        )
-
-        rutas_imagenes = generar_imagenes(
-            tiros,
-            jugador_elegido,
-            temporada_elegida
-        )
-
-        st.session_state.ruta_mp4 = ruta_mp4
+        st.session_state.ruta_mp4       = ruta_mp4
         st.session_state.rutas_imagenes = rutas_imagenes
-        st.session_state.stats = stats
-        st.session_state.ranking = ranking
-        st.session_state.jugador = jugador_elegido
-        st.session_state.temporada = temporada_elegida
+        st.session_state.stats          = stats
+        st.session_state.ranking        = ranking
+        st.session_state.jugador        = jugador_elegido
+        st.session_state.temporada      = temporada_elegida
         st.session_state.duracion_video = duracion_video
         st.session_state.video_mostrado = False
 
-
 if "rutas_imagenes" in st.session_state:
-
     with col_grafico:
-
         st.markdown("#### Mapa de tiros")
 
         placeholder = st.empty()
 
         if not st.session_state.video_mostrado:
-
             with open(st.session_state.ruta_mp4, "rb") as f:
                 placeholder.video(f.read(), autoplay=True)
-
             time.sleep(st.session_state.duracion_video)
-
             st.session_state.video_mostrado = True
-
             st.rerun()
-
         else:
-
+            # Galería de tres imágenes
             rutas = st.session_state.rutas_imagenes
 
             col_a, col_b = st.columns(2)
 
             with col_a:
-
-                st.image(
-                    rutas["convertidos"]["ruta"],
-                    use_container_width=True
-                )
-
+                st.image(rutas["convertidos"]["ruta"], use_container_width=True)
                 st.caption("✅ Tiros convertidos")
-
-                if st.button(
-                    "Ver en grande",
-                    key="btn_convertidos",
-                    use_container_width=True
-                ):
-
+                if st.button("Ver en grande", key="btn_convertidos", use_container_width=True):
                     ver_imagen_grande(
                         rutas["convertidos"]["ruta"],
                         rutas["convertidos"]["titulo"],
@@ -410,20 +339,9 @@ if "rutas_imagenes" in st.session_state:
                     )
 
             with col_b:
-
-                st.image(
-                    rutas["fallados"]["ruta"],
-                    use_container_width=True
-                )
-
+                st.image(rutas["fallados"]["ruta"], use_container_width=True)
                 st.caption("❌ Tiros fallados")
-
-                if st.button(
-                    "Ver en grande",
-                    key="btn_fallados",
-                    use_container_width=True
-                ):
-
+                if st.button("Ver en grande", key="btn_fallados", use_container_width=True):
                     ver_imagen_grande(
                         rutas["fallados"]["ruta"],
                         rutas["fallados"]["titulo"],
@@ -432,22 +350,10 @@ if "rutas_imagenes" in st.session_state:
                     )
 
             _, col_c, _ = st.columns([1, 2, 1])
-
             with col_c:
-
-                st.image(
-                    rutas["completo"]["ruta"],
-                    use_container_width=True
-                )
-
+                st.image(rutas["completo"]["ruta"], use_container_width=True)
                 st.caption("⚖️ Vista completa")
-
-                if st.button(
-                    "Ver en grande",
-                    key="btn_completo",
-                    use_container_width=True
-                ):
-
+                if st.button("Ver en grande", key="btn_completo", use_container_width=True):
                     ver_imagen_grande(
                         rutas["completo"]["ruta"],
                         rutas["completo"]["titulo"],
@@ -456,32 +362,14 @@ if "rutas_imagenes" in st.session_state:
                     )
 
     with col_stats:
-
         st.markdown("#### Estadísticas")
-
-        st.metric(
-            "% de tiro",
-            f"{st.session_state.stats['fg_pct']}%",
-            f"#{st.session_state.ranking['rank_fg']} en la liga"
-        )
-
-        st.metric(
-            "% de triples",
-            f"{st.session_state.stats['fg3_pct']}%",
-            f"#{st.session_state.ranking['rank_fg3']} en la liga"
-        )
-
-        st.metric(
-            "Tiros intentados",
-            st.session_state.stats["intentos"]
-        )
-
-        st.metric(
-            "Tiros convertidos",
-            st.session_state.stats["metidos"]
-        )
+        st.metric("% de tiro",        f"{st.session_state.stats['fg_pct']}%",
+                  f"#{st.session_state.ranking['rank_fg']} en la liga")
+        st.metric("% de triples",     f"{st.session_state.stats['fg3_pct']}%",
+                  f"#{st.session_state.ranking['rank_fg3']} en la liga")
+        st.metric("Tiros intentados",  st.session_state.stats["intentos"])
+        st.metric("Tiros convertidos", st.session_state.stats["metidos"])
 
 else:
-
     with col_grafico:
         st.info("Elegí un jugador y presioná Generar.")
