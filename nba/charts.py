@@ -435,8 +435,14 @@ def generar_comparacion_mapa(
 
         ax.set_title(nombre, color="white", fontsize=13, fontweight="bold", pad=10)
 
-    fig.text(0.5, -0.02, "🟢 Convertidos   🔴 Fallados",
-             color="#888888", fontsize=11, ha="center")
+    import matplotlib.patches as mpatches
+    leyenda = [
+        mpatches.Patch(color="#00ff88", label="Convertidos"),
+        mpatches.Patch(color="#ff3333", label="Fallados"),
+    ]
+    fig.legend(handles=leyenda, loc="lower center", ncol=2,
+               framealpha=0.15, facecolor="#111111",
+               labelcolor="white", fontsize=10, bbox_to_anchor=(0.5, -0.04))
 
     plt.tight_layout()
     ruta = os.path.join(tempfile.gettempdir(), "comparacion_mapa.png")
