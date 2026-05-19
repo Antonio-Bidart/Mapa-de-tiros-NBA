@@ -390,3 +390,175 @@ def generar_video(df: pd.DataFrame, nombre_jugador: str, ruta_salida: str) -> fl
     anim.save(ruta_salida, writer=writer)
     plt.close(fig)
     return duracion
+
+
+# ── Comparador: mapa de tiros lado a lado ─────────────────────────────────────
+
+def generar_comparacion_mapa(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    nombre1: str,
+    nombre2: str,
+    temporada: str,
+) -> str:
+    """
+    Genera un mapa de tiros comparativo con dos canchas lado a lado.
+
+    Muestra la vista completa (convertidos + fallados) de cada jugador
+    en la misma figura para facilitar la comparación visual directa.
+
+    Args:
+        df1: DataFrame de tiros del jugador 1.
+        df2: DataFrame de tiros del jugador 2.
+        nombre1: Nombre del jugador 1 (título cancha izquierda).
+        nombre2: Nombre del jugador 2 (título cancha derecha).
+        temporada: Etiqueta de temporada para el subtítulo.
+
+    Returns:
+        Ruta en disco del archivo PNG generado.
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+    fig.patch.set_facecolor("#000000")
+    fig.suptitle(f"{nombre1}  vs  {nombre2} — {temporada}",
+                 color="white", fontsize=16, fontweight="bold", y=1.01)
+
+    for ax, df, nombre in [(ax1, df1, nombre1), (ax2, df2, nombre2)]:
+        dibujar_cancha(ax, color_lineas="#1a6b3a", color_cancha="#000000")
+
+        metidos  = df[df["SHOT_MADE_FLAG"] == 1]
+        fallados = df[df["SHOT_MADE_FLAG"] == 0]
+
+        ax.scatter(fallados["LOC_X"], fallados["LOC_Y"],
+                   c="#ff3333", alpha=0.45, s=8)
+        ax.scatter(metidos["LOC_X"],  metidos["LOC_Y"],
+                   c="#00ff88", alpha=0.45, s=8)
+
+        ax.set_title(nombre, color="white", fontsize=13, fontweight="bold", pad=10)
+
+    fig.text(0.5, -0.02, "🟢 Convertidos   🔴 Fallados",
+             color="#888888", fontsize=11, ha="center")
+
+    plt.tight_layout()
+    ruta = os.path.join(tempfile.gettempdir(), "comparacion_mapa.png")
+    fig.savefig(ruta, dpi=110, bbox_inches="tight", facecolor="#000000")
+    plt.close(fig)
+    return ruta
+
+
+# ── Comparador: hexbin lado a lado ────────────────────────────────────────────
+
+def generar_comparacion_hexbin(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    nombre1: str,
+    nombre2: str,
+    temporada: str,
+    gridsize: int = 25,
+    min_intentos: int = 3,
+) -> str:
+    """
+    Genera un hexbin comparativo con dos canchas lado a lado.
+
+    Usa la misma escala de color en ambas canchas (vmin/vmax fijos) para que
+    la comparación visual sea justa: el mismo tono de rojo significa el mismo
+    FG% en los dos jugadores.
+
+    Args:
+        df1: DataFrame de tiros del jugador 1.
+        df2: DataFrame de tiros del jugador 2.
+        nombre1: Nombre del jugador 1.
+        nombre2: Nombre del jugador 2.
+        temporada: Etiqueta de temporada.
+        gridsize: Hexágonos por eje.
+        min_intentos: Mínimo de tiros por hexágono para dibujarlo.
+
+    Returns:
+        Ruta en disco del archivo PNG generado.
+    """
+    LIGA_FG_PCT = 0.46
+    vmin, vmax  = LIGA_FG_PCT - 0.20, LIGA_FG_PCT + 0.20
+    cmap        = plt.cm.RdYlBu_r
+
+    def _calcular_hexbin(df: pd.DataFrame, ax) -> tuple:
+        """Calcula offsets, FG% y volumen por hexágono para un DataFrame dado."""
+        x    = df["LOC_X"].values
+        y    = df["LOC_Y"].values
+        made = df["SHOT_MADE_FLAG"].values
+
+        hb = ax.hexbin(x, y, gridsize=gridsize,
+                       extent=(-250, 250, -47.5, 422.5), alpha=0)
+        plt.close("all")
+
+        offsets  = hb.get_offsets()
+        conteos  = hb.get_array()
+        fg_pcts  = np.full(len(offsets), np.nan)
+        volumenes = np.zeros(len(offsets))
+        radio     = 250 / gridsize * 1.5
+
+        for i, (hx, hy) in enumerate(offsets):
+            if conteos[i] < min_intentos:
+                continue
+            mask = (np.abs(x - hx) < radio) & (np.abs(y - hy) < radio)
+            if mask.sum() < min_intentos:
+                continue
+            fg_pcts[i]    = made[mask].mean()
+            volumenes[i]  = mask.sum()
+
+        return offsets, fg_pcts, volumenes
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+    fig.patch.set_facecolor("#000000")
+    fig.suptitle(f"{nombre1}  vs  {nombre2} — {temporada}",
+                 color="white", fontsize=16, fontweight="bold", y=1.01)
+
+    sc_last = None
+    vol_global_max = 1
+
+    # Primera pasada: calcular el volumen máximo global para escalar igual en ambas canchas
+    datos_ambos = []
+    for df, ax in [(df1, ax1), (df2, ax2)]:
+        offsets, fg_pcts, volumenes = _calcular_hexbin(df, ax)
+        datos_ambos.append((offsets, fg_pcts, volumenes))
+        if volumenes.max() > vol_global_max:
+            vol_global_max = volumenes.max()
+
+    # Segunda pasada: dibujar con la misma escala
+    for (offsets, fg_pcts, volumenes), ax, nombre in zip(
+        datos_ambos, (ax1, ax2), (nombre1, nombre2)
+    ):
+        dibujar_cancha(ax, color_lineas="#555555", color_cancha="#000000", lw=1.2)
+
+        sizes = np.where(
+            volumenes >= min_intentos,
+            20 + (volumenes / vol_global_max) * 280,
+            0,
+        )
+        sc_last = ax.scatter(
+            offsets[:, 0], offsets[:, 1],
+            s=sizes, c=fg_pcts,
+            cmap=cmap, vmin=vmin, vmax=vmax,
+            marker="h", linewidths=0.3,
+            edgecolors="#222222", alpha=0.90, zorder=2,
+        )
+        ax.set_title(nombre, color="white", fontsize=13, fontweight="bold", pad=10)
+
+    # Colorbar compartida (una sola para los dos, misma escala)
+    cbar = fig.colorbar(sc_last, ax=[ax1, ax2], fraction=0.02, pad=0.02)
+    cbar.set_label("% de tiro", color="white", fontsize=11)
+    cbar.ax.yaxis.set_tick_params(color="white")
+    plt.setp(cbar.ax.yaxis.get_ticklabels(), color="white")
+    cbar.set_ticks([vmin, LIGA_FG_PCT, vmax])
+    cbar.set_ticklabels([
+        f"{int(vmin*100)}% (frío)",
+        f"{int(LIGA_FG_PCT*100)}% (liga)",
+        f"{int(vmax*100)}% (caliente)",
+    ])
+
+    fig.text(0.5, -0.02, "Tamaño = volumen de tiros · Escala de tamaño y color unificada entre jugadores",
+             color="#888888", fontsize=10, ha="center")
+
+    plt.tight_layout()
+    ruta = os.path.join(tempfile.gettempdir(), "comparacion_hexbin.png")
+    fig.savefig(ruta, dpi=110, bbox_inches="tight", facecolor="#000000")
+    plt.close(fig)
+    return ruta
