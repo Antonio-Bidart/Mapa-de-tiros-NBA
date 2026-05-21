@@ -3,13 +3,11 @@ nba/api.py
 ----------
 Comunicación con la NBA Stats API.
 
-Toda llamada al mundo exterior vive acá. Si la API cambia (endpoints,
-parámetros, formato de respuesta), este es el único archivo que hay que tocar.
-
-Funciones públicas:
-    obtener_tiros()         - Tiros de una temporada (soporta tipo="Ambos")
-    obtener_tiros_carrera() - Tiros de toda la carrera, ignora temporadas sin datos
-    obtener_stats_panel()   - Stats completas: rankings, GP, MIN, +/-, PTS, FTA
+Mínimos oficiales para rankings:
+    Regular Season: 300 FGM, 82 3PM  (nba.com/stats/help/statminimums)
+    Playoffs:        50 FGM, 20 3PM  (≈4 FGM/partido × ~13 partidos)
+    Toda la carrera: sin ranking (no aplica)
+    Ambos (RS+PO):   sin ranking (universos mezclados)
 """
 
 import pandas as pd
@@ -22,28 +20,20 @@ from nba_api.stats.endpoints import (
     playercareerstats,
 )
 
+# ── Mínimos para rankings ──────────────────────────────────────────────────────
+MIN_FGM      = 300   # Regular Season FG%
+MIN_FG3M     = 82    # Regular Season 3PT%
+MIN_FGM_PO   = 50    # Playoffs FG%  (~4 FGM/partido × ~13 partidos)
+MIN_FG3M_PO  = 20    # Playoffs 3PT% (~1.5 3PM/partido × ~13 partidos)
 
-# Mínimos oficiales de la NBA para calificar en rankings de porcentaje.
-# Fuente: https://www.nba.com/stats/help/statminimums
-MIN_FGM  = 300  # Field goals convertidos para calificar en FG%
-MIN_FG3M = 82   # Triples convertidos para calificar en 3PT%
-
-# La NBA API tiene datos de shot chart desde la temporada 1996-97
 PRIMERA_TEMPORADA_DISPONIBLE = 1996
+OPCION_CARRERA_API = "Toda la carrera"   # String interno (sin emoji)
 
 
-# ── Funciones internas (sin caché) ────────────────────────────────────────────
+# ── Funciones internas ────────────────────────────────────────────────────────
 
 def _fetch_tiros(player_id: int, temporada: str, tipo: str) -> pd.DataFrame:
-    """
-    Llama a ShotChartDetail y devuelve el DataFrame crudo.
-
-    Función interna sin caché — permite que obtener_tiros_carrera la llame
-    en un loop sin romper el mecanismo de caché de Streamlit.
-
-    Raises:
-        ValueError: Si no hay datos para esa combinación.
-    """
+    """Llama a ShotChartDetail sin caché. Para uso interno en loops."""
     respuesta = shotchartdetail.ShotChartDetail(
         team_id=0,
         player_id=player_id,
@@ -59,15 +49,9 @@ def _fetch_tiros(player_id: int, temporada: str, tipo: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def _obtener_debut(player_id: int) -> int:
-    """
-    Retorna el año de debut del jugador en la NBA.
-
-    Cachea por 24 horas — esta info no cambia nunca para un jugador retirado
-    y cambia a lo sumo una vez por año para un jugador activo.
-    """
+    """Año de debut del jugador. Cachea 24h."""
     info = commonplayerinfo.CommonPlayerInfo(player_id=player_id)
-    df   = info.get_data_frames()[0]
-    return int(df["FROM_YEAR"].values[0])
+    return int(info.get_data_frames()[0]["FROM_YEAR"].values[0])
 
 
 # ── Funciones públicas ────────────────────────────────────────────────────────
@@ -79,40 +63,23 @@ def obtener_tiros(
     tipo: str = "Regular Season",
 ) -> pd.DataFrame:
     """
-    Obtiene el registro de tiros de un jugador en una temporada.
+    Tiros de un jugador en una temporada específica.
 
-    Args:
-        player_id: ID del jugador en la NBA API.
-        temporada: Formato "YYYY-YY" (p. ej. "2024-25").
-        tipo: "Regular Season", "Playoffs" o "Ambos".
-              "Ambos" concatena Regular Season + Playoffs de esa temporada.
-
-    Returns:
-        DataFrame con una fila por tiro. Columnas clave:
-            LOC_X, LOC_Y       - Coordenadas (décimas de pie, aro en origen).
-            SHOT_MADE_FLAG     - 1 convertido, 0 fallado.
-            SHOT_TYPE          - "2PT Field Goal" o "3PT Field Goal".
-            GAME_DATE          - Fecha en formato "YYYYMMDD".
-            PERIOD             - Cuarto del partido.
-
-    Raises:
-        ValueError: Si no hay datos para la combinación pedida.
+    tipo puede ser "Regular Season", "Playoffs" o "Ambos".
+    "Ambos" concatena RS + PO; si no hay playoffs, devuelve solo RS.
     """
     if tipo == "Ambos":
         dfs = []
         for t in ["Regular Season", "Playoffs"]:
             try:
                 df = _fetch_tiros(player_id, temporada, t)
-                df = df.copy()
-                df["TIPO"] = t
+                df = df.copy(); df["TIPO"] = t
                 dfs.append(df)
             except ValueError:
-                pass   # Sin playoffs ese año → lo ignoramos silenciosamente
+                pass
         if not dfs:
             raise ValueError(
-                f"No se encontraron tiros para el jugador {player_id} "
-                f"en la temporada {temporada} (Regular Season ni Playoffs)."
-            )
+                f"Sin datos para {player_id} en {temporada} (RS ni PO).")
         return pd.concat(dfs, ignore_index=True)
 
     return _fetch_tiros(player_id, temporada, tipo)
@@ -124,57 +91,41 @@ def obtener_tiros_carrera(
     tipo: str = "Regular Season",
 ) -> tuple:
     """
-    Obtiene todos los tiros de la carrera de un jugador.
+    Todos los tiros de la carrera de un jugador.
 
-    Itera desde el año de debut hasta la temporada actual. Las temporadas
-    anteriores a 1996-97 (límite de la API) se saltan automáticamente.
-    Las temporadas sin datos (lesiones, temporadas fuera de la NBA) se
-    ignoran silenciosamente sin lanzar error.
-
-    Args:
-        player_id: ID del jugador en la NBA API.
-        tipo: "Regular Season", "Playoffs" o "Ambos".
+    Itera desde el debut hasta hoy. Las temporadas sin datos se saltan
+    silenciosamente (lesiones, temporadas fuera de la NBA, etc.).
 
     Returns:
-        Tuple (df, temporadas_con_datos) donde:
-            df                  - DataFrame con todos los tiros concatenados.
-                                  Incluye columna "TEMPORADA" para filtrar.
-            temporadas_con_datos - Lista ordenada de temporadas con datos
-                                   (p. ej. ["2009-10", "2010-11", ...]).
-
-    Raises:
-        ValueError: Si no se encontró ningún tiro en toda la carrera.
+        (df_completo, temporadas_con_datos)
+        df_completo incluye columnas TEMPORADA y TIPO para filtrar.
     """
-    hoy          = datetime.now()
-    año_actual   = hoy.year if hoy.month >= 9 else hoy.year - 1
-    año_debut    = max(_obtener_debut(player_id), PRIMERA_TEMPORADA_DISPONIBLE)
-    tipos_a_pedir = ["Regular Season", "Playoffs"] if tipo == "Ambos" else [tipo]
+    hoy        = datetime.now()
+    año_actual = hoy.year if hoy.month >= 9 else hoy.year - 1
+    año_debut  = max(_obtener_debut(player_id), PRIMERA_TEMPORADA_DISPONIBLE)
+    tipos_pedir = ["Regular Season", "Playoffs"] if tipo == "Ambos" else [tipo]
 
     dfs: list[pd.DataFrame] = []
     temporadas_con_datos: list[str] = []
 
     for año in range(año_debut, año_actual + 1):
         temporada = f"{año}-{str(año + 1)[2:]}"
-        temporada_tiene_datos = False
-
-        for t in tipos_a_pedir:
+        tuvo_datos = False
+        for t in tipos_pedir:
             try:
                 df = _fetch_tiros(player_id, temporada, t)
                 df = df.copy()
                 df["TEMPORADA"] = temporada
                 df["TIPO"]      = t
                 dfs.append(df)
-                temporada_tiene_datos = True
+                tuvo_datos = True
             except ValueError:
-                pass   # Sin datos ese año/tipo → seguimos
-
-        if temporada_tiene_datos and temporada not in temporadas_con_datos:
+                pass
+        if tuvo_datos and temporada not in temporadas_con_datos:
             temporadas_con_datos.append(temporada)
 
     if not dfs:
-        raise ValueError(
-            f"No se encontraron tiros en ninguna temporada del jugador {player_id}."
-        )
+        raise ValueError(f"Sin tiros en ninguna temporada del jugador {player_id}.")
 
     return pd.concat(dfs, ignore_index=True), temporadas_con_datos
 
@@ -186,64 +137,63 @@ def obtener_stats_panel(
     tipo: str = "Regular Season",
 ) -> dict:
     """
-    Obtiene estadísticas completas de un jugador para el panel de comparación.
+    Stats completas para el panel de comparación.
 
-    Combina datos de leaguedashplayerstats (para rankings y stats de temporada)
-    con los mínimos oficiales de la NBA para FG% y 3PT%.
+    Retorna rankings, GP, MIN/partido, +/-, PTS, FGA, FTA.
 
-    Para tipo="Ambos" promedia las stats de Regular Season y Playoffs.
-    Para tipo="Toda la carrera" usa playercareerstats (totales históricos).
+    Reglas de ranking:
+        - "Toda la carrera"  → sin ranking (no aplica)
+        - tipo "Ambos"       → sin ranking (universos mezclados)
+        - "Playoffs"         → mínimos reducidos (50 FGM, 20 3PM)
+        - "Regular Season"   → mínimos estándar (300 FGM, 82 3PM)
 
-    Args:
-        player_id: ID del jugador.
-        temporada: Formato "YYYY-YY" o "Toda la carrera".
-        tipo: "Regular Season", "Playoffs" o "Ambos".
-
-    Returns:
-        dict con:
-            rank_fg, rank_fg3, total_fg, total_fg3  - Rankings (None si no califica).
-            gp       - Partidos jugados.
-            min_pg   - Minutos promedio por partido.
-            plus_minus - Plus/Minus total de la temporada.
-            pts      - Puntos totales.
-            fga      - Intentos de tiro de campo.
-            fta      - Intentos de tiro libre.
+    Plus/Minus:
+        - Por temporada → valor oficial de leaguedashplayerstats
+        - Toda la carrera → None (no acumula significado entre temporadas)
     """
-    # ── Carrera completa: usamos playercareerstats ─────────────────────────────
-    if temporada == "Toda la carrera":
-        carrera = playercareerstats.PlayerCareerStats(player_id=player_id)
-        tipos_df = {
-            "Regular Season": carrera.get_data_frames()[0],  # SeasonTotalsRegularSeason
-            "Playoffs"       : carrera.get_data_frames()[2],  # SeasonTotalsPostSeason
-        }
-        tipos_usar = ["Regular Season", "Playoffs"] if tipo == "Ambos" else [tipo]
-        gp = pts = fga = fta = plus_minus = min_total = 0
-        for t in tipos_usar:
-            df_t = tipos_df[t]
+
+    # ── Carrera completa ──────────────────────────────────────────────────────
+    if temporada == OPCION_CARRERA_API:
+        carrera   = playercareerstats.PlayerCareerStats(player_id=player_id)
+        dfs_lista = carrera.get_data_frames()
+        df_rs = dfs_lista[0] if len(dfs_lista) > 0 else pd.DataFrame()
+        df_po = dfs_lista[2] if len(dfs_lista) > 2 else pd.DataFrame()
+
+        tipos_usar = {"Regular Season": df_rs, "Playoffs": df_po}
+        if tipo != "Ambos":
+            tipos_usar = {tipo: tipos_usar.get(tipo, pd.DataFrame())}
+
+        gp = pts = fga = fta = min_total = 0
+        for df_t in tipos_usar.values():
             if df_t.empty:
                 continue
-            gp         += int(df_t["GP"].sum())
-            pts        += int(df_t["PTS"].sum())
-            fga        += int(df_t["FGA"].sum())
-            fta        += int(df_t["FTA"].sum())
-            plus_minus += float(df_t["PLUS_MINUS"].sum()) if "PLUS_MINUS" in df_t.columns else 0
-            min_total  += float(df_t["MIN"].sum())
+            gp        += int(df_t["GP"].sum())
+            pts       += int(df_t["PTS"].sum())
+            fga       += int(df_t["FGA"].sum())
+            fta       += int(df_t["FTA"].sum())
+            min_total += float(df_t["MIN"].sum())
 
-        min_pg = round(min_total / gp, 1) if gp > 0 else 0
         return {
             "rank_fg": None, "rank_fg3": None,
             "total_fg": None, "total_fg3": None,
-            "gp": gp, "min_pg": min_pg,
-            "plus_minus": round(plus_minus, 1),
+            "gp"        : gp,
+            "min_pg"    : round(min_total / gp, 1) if gp > 0 else 0,
+            "plus_minus": None,   # No acumula significado a lo largo de la carrera
             "pts": pts, "fga": fga, "fta": fta,
         }
 
     # ── Temporada específica ──────────────────────────────────────────────────
     tipos_usar = ["Regular Season", "Playoffs"] if tipo == "Ambos" else [tipo]
-    gp = pts = fga = fta = plus_minus_total = min_total = 0
 
-    # Para rankings solo usamos el tipo principal (los rankings no aplican a "Ambos")
-    tipo_ranking = "Regular Season" if tipo == "Ambos" else tipo
+    # Elegimos mínimos y tipo de ranking
+    calcular_ranking = tipo not in ("Ambos",)   # Sin ranking para "Ambos"
+    if calcular_ranking:
+        tipo_ranking = tipo  # "Regular Season" o "Playoffs"
+        min_fgm  = MIN_FGM_PO  if tipo == "Playoffs" else MIN_FGM
+        min_fg3m = MIN_FG3M_PO if tipo == "Playoffs" else MIN_FG3M
+    else:
+        tipo_ranking = "Regular Season"   # Solo para obtener stats del jugador
+        min_fgm = min_fg3m = 0
 
     respuesta = leaguedashplayerstats.LeagueDashPlayerStats(
         season=temporada,
@@ -251,23 +201,27 @@ def obtener_stats_panel(
     )
     df_liga = respuesta.get_data_frames()[0]
 
-    # Rankings con mínimos oficiales
-    cal_fg  = df_liga[df_liga["FGM"]  >= MIN_FGM].copy()
-    cal_fg3 = df_liga[df_liga["FG3M"] >= MIN_FG3M].copy()
-    cal_fg["rank_fg"]   = cal_fg["FG_PCT"].rank(ascending=False).astype(int)
-    cal_fg3["rank_fg3"] = cal_fg3["FG3_PCT"].rank(ascending=False).astype(int)
-    jug_fg  = cal_fg[cal_fg["PLAYER_ID"]   == player_id]
-    jug_fg3 = cal_fg3[cal_fg3["PLAYER_ID"] == player_id]
+    # Rankings (solo si aplica)
+    if calcular_ranking:
+        cal_fg  = df_liga[df_liga["FGM"]  >= min_fgm].copy()
+        cal_fg3 = df_liga[df_liga["FG3M"] >= min_fg3m].copy()
+        cal_fg["rank_fg"]   = cal_fg["FG_PCT"].rank(ascending=False).astype(int)
+        cal_fg3["rank_fg3"] = cal_fg3["FG3_PCT"].rank(ascending=False).astype(int)
+        jug_fg  = cal_fg[cal_fg["PLAYER_ID"]   == player_id]
+        jug_fg3 = cal_fg3[cal_fg3["PLAYER_ID"] == player_id]
+        rank_fg   = int(jug_fg["rank_fg"].values[0])   if not jug_fg.empty  else None
+        rank_fg3  = int(jug_fg3["rank_fg3"].values[0]) if not jug_fg3.empty else None
+        total_fg  = len(cal_fg)
+        total_fg3 = len(cal_fg3)
+    else:
+        rank_fg = rank_fg3 = total_fg = total_fg3 = None
 
-    rank_fg   = int(jug_fg["rank_fg"].values[0])   if not jug_fg.empty  else None
-    rank_fg3  = int(jug_fg3["rank_fg3"].values[0]) if not jug_fg3.empty else None
-    total_fg  = len(cal_fg)
-    total_fg3 = len(cal_fg3)
-
-    # Stats del jugador (sumamos si tipo="Ambos")
+    # Stats del jugador (suma si tipo="Ambos")
+    gp = pts = fga = fta = min_total = 0
+    plus_minus = 0.0
     for t in tipos_usar:
         if t != tipo_ranking:
-            r2 = leaguedashplayerstats.LeagueDashPlayerStats(
+            r2  = leaguedashplayerstats.LeagueDashPlayerStats(
                 season=temporada, season_type_all_star=t)
             df2 = r2.get_data_frames()[0]
         else:
@@ -276,14 +230,12 @@ def obtener_stats_panel(
         jug = df2[df2["PLAYER_ID"] == player_id]
         if jug.empty:
             continue
-        gp             += int(jug["GP"].values[0])
-        pts            += int(jug["PTS"].values[0])
-        fga            += int(jug["FGA"].values[0])
-        fta            += int(jug["FTA"].values[0])
-        plus_minus_total += float(jug["PLUS_MINUS"].values[0])
-        min_total      += float(jug["MIN"].values[0])
-
-    min_pg = round(min_total / gp, 1) if gp > 0 else 0
+        gp         += int(jug["GP"].values[0])
+        pts        += int(jug["PTS"].values[0])
+        fga        += int(jug["FGA"].values[0])
+        fta        += int(jug["FTA"].values[0])
+        min_total  += float(jug["MIN"].values[0])
+        plus_minus += float(jug["PLUS_MINUS"].values[0])
 
     return {
         "rank_fg"   : rank_fg,
@@ -291,24 +243,15 @@ def obtener_stats_panel(
         "total_fg"  : total_fg,
         "total_fg3" : total_fg3,
         "gp"        : gp,
-        "min_pg"    : min_pg,
-        "plus_minus": round(plus_minus_total, 1),
+        "min_pg"    : round(min_total / gp, 1) if gp > 0 else 0,
+        "plus_minus": round(plus_minus, 1),
         "pts"       : pts,
         "fga"       : fga,
         "fta"       : fta,
     }
 
 
-# Alias para compatibilidad con el código existente
 def obtener_ranking(player_id: int, temporada: str, tipo: str) -> dict:
-    """
-    Alias de obtener_stats_panel() que devuelve solo los campos de ranking.
-    Mantiene compatibilidad con el código anterior que usaba obtener_ranking().
-    """
+    """Alias de obtener_stats_panel() para compatibilidad."""
     stats = obtener_stats_panel(player_id, temporada, tipo)
-    return {
-        "rank_fg"  : stats["rank_fg"],
-        "rank_fg3" : stats["rank_fg3"],
-        "total_fg" : stats["total_fg"],
-        "total_fg3": stats["total_fg3"],
-    }
+    return {k: stats[k] for k in ("rank_fg", "rank_fg3", "total_fg", "total_fg3")}
