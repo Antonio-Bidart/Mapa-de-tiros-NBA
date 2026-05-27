@@ -1,15 +1,14 @@
 """
 nba/styles.py
 -------------
-Sistema de temas visuales para la app NBA Shot Chart.
+Sistema de tema visual para la app NBA Shot Chart.
 
-Dos temas disponibles:
-    "light" → Editorial Paper: crema, Bebas Neue, dorado. Inspirado en Sports Illustrated.
-    "dark"  → Midnight Court: negro profundo, mismo editorial pero invertido.
+Tema único:
+    "dark"  → Midnight Court: negro profundo, tipografía editorial, acento blanco.
 
 Uso:
     from nba.styles import aplicar_estilos, stat_table_html
-    aplicar_estilos(tema)   # llama a st.markdown con el CSS completo
+    aplicar_estilos()   # llama a st.markdown con el CSS completo
 """
 
 import streamlit as st
@@ -18,37 +17,6 @@ import streamlit as st
 # ── Paletas ───────────────────────────────────────────────────────────────────
 
 TEMAS = {
-    "light": {
-        # Fondos
-        "bg_app"        : "#f2ede3",
-        "bg_sidebar"    : "#1a1a1a",
-        "bg_card"       : "#e8e2d8",
-        "bg_input"      : "#ddd8ce",
-        "bg_tab_active" : "#f2ede3",
-
-        # Texto
-        "text_primary"  : "#111111",
-        "text_secondary": "#666666",
-        "text_sidebar"  : "#f2ede3",
-        "text_muted"    : "#999999",
-
-        # Acentos
-        "accent"        : "#c8a850",
-        "accent_hover"  : "#b8952f",
-        "accent_text"   : "#1a1a1a",
-
-        # Bordes
-        "border"        : "#d0c9be",
-        "border_sidebar": "#2a2a2a",
-
-        # Tabla
-        "tabla_header"  : "#1a1a1a",
-        "tabla_header_text": "#f2ede3",
-        "tabla_row_hover": "#ddd8ce",
-        "tabla_border"  : "#d0c9be",
-        "mejor"         : "#2d7a4f",
-        "peor"          : "#c0392b",
-    },
     "dark": {
         # Fondos
         "bg_app"        : "#0a0a0a",
@@ -63,9 +31,9 @@ TEMAS = {
         "text_sidebar"  : "#f0ece4",
         "text_muted"    : "#444444",
 
-        # Acentos
-        "accent"        : "#c8a850",
-        "accent_hover"  : "#d4b86a",
+        # Acentos — Blanco editorial
+        "accent"        : "#e8e8e8",
+        "accent_hover"  : "#ffffff",
         "accent_text"   : "#0a0a0a",
 
         # Bordes
@@ -83,17 +51,17 @@ TEMAS = {
 }
 
 
-def aplicar_estilos(tema: str = "light") -> None:
+def aplicar_estilos(tema: str = "dark") -> None:
     """
-    Inyecta el CSS completo del tema elegido en la app de Streamlit.
+    Inyecta el CSS completo del tema en la app de Streamlit.
 
     Importa Bebas Neue e IBM Plex desde Google Fonts.
     Sobreescribe los estilos por defecto de Streamlit con selectores específicos.
 
     Args:
-        tema: "light" o "dark".
+        tema: actualmente solo "dark" (Midnight Court).
     """
-    c = TEMAS.get(tema, TEMAS["light"])
+    c = TEMAS.get(tema, TEMAS["dark"])
 
     css = f"""
     @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap');
@@ -170,8 +138,16 @@ def aplicar_estilos(tema: str = "light") -> None:
         border-color: {c['accent']} !important;
     }}
 
+    /* El ícono del checkmark (SVG) debe ser oscuro sobre fondo blanco */
+    [data-testid="stSidebar"] .stCheckbox input:checked + div svg {{
+        stroke: {c['accent_text']} !important;
+        color: {c['accent_text']} !important;
+    }}
+
     /* ── Botón principal Generar ── */
-    [data-testid="stSidebar"] .stButton button {{
+    [data-testid="stSidebar"] .stButton button,
+    [data-testid="stSidebar"] .stButton button p,
+    [data-testid="stSidebar"] .stButton button span {{
         background-color: {c['accent']} !important;
         color: {c['accent_text']} !important;
         border: none !important;
@@ -231,6 +207,16 @@ def aplicar_estilos(tema: str = "light") -> None:
     [data-testid="stSidebar"] .stRadio label:has(input:checked) {{
         background: {c['accent']} !important;
         border-color: {c['accent']} !important;
+        color: {c['accent_text']} !important;
+    }}
+
+    /* Forzar color oscuro en todos los hijos del label activo.
+       Necesario porque [stSidebar] * tiene color: text_sidebar !important
+       y gana sobre el color del label por especificidad. */
+    [data-testid="stSidebar"] .stRadio label:has(input:checked) *,
+    [data-testid="stSidebar"] .stRadio label:has(input:checked) p,
+    [data-testid="stSidebar"] .stRadio label:has(input:checked) span,
+    [data-testid="stSidebar"] .stRadio label:has(input:checked) div {{
         color: {c['accent_text']} !important;
     }}
 
@@ -473,13 +459,13 @@ def stat_table_html(
     nombre1: str, nombre2: str,
     temporada1: str, temporada2: str,
     tipo1: str, tipo2: str,
-    tema: str = "light",
+    tema: str = "dark",
 ) -> str:
     """
     Genera la tabla comparativa HTML con estilos del tema activo.
     """
     from nba.stats import calcular_ts
-    c = TEMAS.get(tema, TEMAS["light"])
+    c = TEMAS.get(tema, TEMAS["dark"])
 
     OPCION_CARRERA = "📅 Toda la carrera"
 

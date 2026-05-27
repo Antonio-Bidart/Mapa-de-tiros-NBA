@@ -7,8 +7,7 @@ Modos:
     Un jugador  → scatter maps, hexbin, animación por partidos
     Comparar    → mapa lado a lado, hexbin lado a lado, tabla de stats
 
-Temas: "light" (Editorial Paper) y "dark" (Midnight Court).
-El tema se guarda en st.session_state.tema y persiste durante la sesión.
+Tema: "dark" (Midnight Court) — fijo, sin toggle.
 """
 
 import os
@@ -46,7 +45,7 @@ st.set_page_config(
 
 # Inicializar tema en session_state
 if "tema" not in st.session_state:
-    st.session_state.tema = "light"
+    st.session_state.tema = "dark"
 
 # Aplicar estilos del tema activo
 aplicar_estilos(st.session_state.tema)
@@ -105,16 +104,10 @@ with st.sidebar:
                     margin-bottom:2px;">NBA Analytics</div>
         <div style="font-family:'Bebas Neue',sans-serif;font-size:26px;
                     letter-spacing:0.05em;color:#f2ede3;line-height:1;">
-            Shot<span style="color:#c8a850;">.</span>Chart
+            Shot<span style="color:#e8e8e8;">.</span>Chart
         </div>
     </div>
     """, unsafe_allow_html=True)
-
-    # Toggle de tema
-    tema_label = "☀️ Modo claro" if st.session_state.tema == "dark" else "🌙 Modo oscuro"
-    if st.button(tema_label, use_container_width=True, key="tema_btn"):
-        st.session_state.tema = "dark" if st.session_state.tema == "light" else "light"
-        st.rerun()
 
     st.markdown('<div class="sidebar-section">Modo</div>', unsafe_allow_html=True)
     modo     = st.radio("", ["👤 Un jugador", "⚔️ Comparar"], horizontal=True,
@@ -168,7 +161,7 @@ with st.sidebar:
 # ── Título principal ──────────────────────────────────────────────────────────
 
 tema = st.session_state.tema
-acento = "#c8a850"
+acento = "#e8e8e8"
 
 if comparar:
     lbl1 = label_temporada(temporada1, tipo1)
