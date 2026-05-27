@@ -14,7 +14,10 @@ Herramienta de análisis visual de tiros NBA. Conecta en tiempo real con la NBA 
 
 ---
 
-<img width="1920" height="1080" alt="NBA Shot Chart — dark UI" src="https://github.com/user-attachments/assets/be5a6279-9a95-4821-84aa-88819b5478be" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/aba2667a-be23-4c3d-8cad-010a8b5e5d71" />
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/39f3c8e9-629d-47a2-ae4f-bc7157d1f60f" />
+
 
 ## Features
 
